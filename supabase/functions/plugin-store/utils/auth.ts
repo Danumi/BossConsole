@@ -415,7 +415,7 @@ export async function logApiKeyAction(
   success = true,
   errorMessage?: string
 ): Promise<void> {
-  const logFailure = (error: unknown) => {
+  const logFailure = (error: unknown, thrownKind?: string) => {
     // Supabase RPC errors resolve as { data, error }; thrown request failures
     // reach the catch below. Log only a database error code, never its message
     // or details, which may contain values from the audit record.
@@ -428,7 +428,7 @@ export async function logApiKeyAction(
 
     console.error(
       "Error logging API key action:",
-      safeCode ? { code: safeCode } : "Audit logging failed",
+      safeCode ? { code: safeCode } : thrownKind ?? "Audit logging failed",
     )
   }
 
@@ -453,6 +453,13 @@ export async function logApiKeyAction(
     }
   } catch (e) {
     // Don't fail the request if logging fails
-    logFailure(e)
+    // Keep the error class useful for diagnosing local shaping/runtime bugs,
+    // but never log the error's mutable name or message.
+    const thrownKind = e instanceof TypeError
+      ? "TypeError"
+      : e instanceof Error
+      ? "Error"
+      : typeof e
+    logFailure(e, thrownKind)
   }
 }

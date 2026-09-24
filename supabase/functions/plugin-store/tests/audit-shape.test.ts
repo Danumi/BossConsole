@@ -291,8 +291,10 @@ Deno.test("logApiKeyAction safely logs resolved and rejected audit failures with
         },
       }),
   } as unknown as SupabaseClient
+  const transportError = new TypeError("request body contained secret-token")
+  transportError.name = "secret-token"
   const rejectedFailure = {
-    rpc: () => Promise.reject(new Error("request body contained secret-token")),
+    rpc: () => Promise.reject(transportError),
   } as unknown as SupabaseClient
 
   console.error = (...args: unknown[]) => {
@@ -311,7 +313,7 @@ Deno.test("logApiKeyAction safely logs resolved and rejected audit failures with
 
   assertEquals(logged, [
     ["Error logging API key action:", { code: "42501" }],
-    ["Error logging API key action:", "Audit logging failed"],
+    ["Error logging API key action:", "TypeError"],
   ])
 })
 
