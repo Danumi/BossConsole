@@ -415,6 +415,23 @@ export async function logApiKeyAction(
   success = true,
   errorMessage?: string
 ): Promise<void> {
+  const logFailure = (error: unknown) => {
+    // Supabase RPC errors resolve as { data, error }; thrown request failures
+    // reach the catch below. Log only a database error code, never its message
+    // or details, which may contain values from the audit record.
+    const code = typeof error === "object" && error !== null && "code" in error
+      ? error.code
+      : undefined
+    const safeCode = typeof code === "string" && /^(?:[0-9A-Z]{5}|PGRST\d{3})$/.test(code)
+      ? code
+      : undefined
+
+    console.error(
+      "Error logging API key action:",
+      safeCode ? { code: safeCode } : "Audit logging failed",
+    )
+  }
+
   try {
     const ipAddress = auditClientIp(
       request?.headers.get("cf-connecting-ip"),
@@ -422,7 +439,7 @@ export async function logApiKeyAction(
     )
     const userAgent = auditUserAgent(request?.headers.get("user-agent"))
 
-    await supabase.rpc("log_api_key_action", {
+    const { error } = await supabase.rpc("log_api_key_action", {
       p_api_key_id: apiKeyId,
       p_action: auditAction(action),
       p_plugin_id: auditPluginId(pluginId),
@@ -431,8 +448,11 @@ export async function logApiKeyAction(
       p_success: success,
       p_error_message: auditErrorMessage(errorMessage),
     })
+    if (error) {
+      logFailure(error)
+    }
   } catch (e) {
     // Don't fail the request if logging fails
-    console.error("Error logging API key action:", e)
+    logFailure(e)
   }
 }
