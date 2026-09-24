@@ -23,6 +23,7 @@ import java.util.concurrent.atomic.AtomicReference
 /** Signature of the host-wired broker that invokes a registered process's capability. */
 private typealias CapabilityBroker = suspend (InvokeCapabilityRequest) -> InvokeCapabilityResponse
 
+@Suppress("TooManyFunctions") // registration, heartbeat, status, shutdown and mediation share one process table.
 class KernelServiceImpl(
     private val onProcessRegistered: suspend (String, ProcessManifest, String) -> Unit = { _, _, _ -> },
     private val onShutdownRequested: suspend (String, Boolean) -> Boolean = { _, _ -> true },
@@ -131,14 +132,46 @@ class KernelServiceImpl(
             }
 
         if (success) {
-            registeredProcesses.remove(processId)
-            lastHeartbeats.remove(processId)
+            evictProcess(processId)
         }
 
         return ShutdownResponse
             .newBuilder()
             .setSuccess(success)
             .build()
+    }
+
+    /**
+     * Deregister a process that died without a clean shutdown - the crash path the kernel's
+     * failure handling reports on the host side (KernelBootstrap.handleFailure).
+     *
+     * Registration is otherwise removed only on a successful [requestShutdown], so a crashed
+     * id would stay in the tables for the rest of the session: [getProcessStatus] and
+     * [listProcesses] keep stamping it RUNNING and [registerProcess] keeps handing its stale
+     * [RegisteredProcessInfo.ipcAddress] to every later child. Evicting here keeps
+     * "registered" equivalent to "live" for this table.
+     *
+     * Call before spawning a replacement: a respawn re-registers the same id, and evicting
+     * after that would drop the live child's entries instead of the dead one's.
+     *
+     * @return true if the id was registered and its entries were dropped.
+     */
+    fun deregisterProcess(processId: String): Boolean {
+        val evicted = evictProcess(processId)
+        if (evicted) {
+            logger.info("Deregistered process after failure: id={}", processId)
+        }
+        return evicted
+    }
+
+    /**
+     * Single eviction site for both deregistration paths: the clean [requestShutdown] flow
+     * and the crash path via [deregisterProcess].
+     */
+    private fun evictProcess(processId: String): Boolean {
+        val evicted = registeredProcesses.remove(processId) != null
+        lastHeartbeats.remove(processId)
+        return evicted
     }
 
     override suspend fun getProcessStatus(request: ProcessStatusRequest): ProcessStatusResponse {
